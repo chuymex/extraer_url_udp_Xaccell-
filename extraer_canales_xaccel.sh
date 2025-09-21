@@ -15,7 +15,6 @@ DELIM="|"
 OUTPUT_DIR="."
 UDP_PREFIX="udp://@"
 RTMP_PREFIX="rtmp://localhost:"
-# ----------------------------------------------------------
 
 # Detecta el archivo dump más reciente
 DUMP_GZ=$(ls -1t "${DUMP_DIR}/${DUMP_PREFIX}"*."${DUMP_EXT}" 2>/dev/null | head -n 1)
@@ -35,23 +34,20 @@ echo "Usando archivo dump detectado: $DUMP_GZ"
     echo "#"
 } > "${OUTPUT_DIR}/${OUTPUT_FILE}"
 
-# Procesa cada registro que tiene UDP y RTMP localhost
-zcat "$DUMP_GZ" | grep "INSERT INTO \`stream_config\`" | \
-sed 's/),(/)\n(/g' | grep "$UDP_PREFIX" | \
+# Procesa cada registro que tiene UDP
+zcat "$DUMP_GZ" | grep "INSERT INTO \`stream_config\`" | sed 's/),(/)\n(/g' | grep "$UDP_PREFIX" | \
 while read -r registro; do
-    # Extrae la URL UDP
+    # Extrae la URL UDP (puede haber más de una, pero normalmente solo hay una)
     url_udp=$(echo "$registro" | grep -oP 'udp://@[0-9\.]+:[0-9]+')
-    # Extrae la URL RTMP localhost (si hay más de una, solo toma la primera)
-    url_rtmp=$(echo "$registro" | grep -oP "rtmp://localhost:[0-9]+/[^ ,)']+" | head -n 1)
-    # Extrae el nombre corto del RTMP (último segmento, sin comillas ni .m3u8)
-    nombre_output=""
-    if [ -n "$url_rtmp" ]; then
+    # Extrae todas las URLs RTMP localhost del registro
+    echo "$registro" | grep -oP "rtmp://localhost:[0-9]+/[^ ',)]+" | while read -r url_rtmp; do
+        # Extrae el nombre corto del RTMP (último segmento, sin .m3u8 ni comillas)
         nombre_output=$(echo "$url_rtmp" | sed -nE "s#.*/([^/']+)\$#\1#p" | sed 's/.m3u8$//')
-    fi
-    # Solo imprime si hay UDP y nombre corto de RTMP
-    if [ -n "$url_udp" ] && [ -n "$nombre_output" ]; then
-        echo "$url_udp$DELIM$nombre_output"
-    fi
+        # Solo imprime si ambos existen
+        if [ -n "$url_udp" ] && [ -n "$nombre_output" ]; then
+            echo "$url_udp$DELIM$nombre_output"
+        fi
+    done
 done >> "${OUTPUT_DIR}/${OUTPUT_FILE}"
 
 echo "Archivo generado correctamente: ${OUTPUT_DIR}/${OUTPUT_FILE}"
