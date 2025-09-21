@@ -1,57 +1,50 @@
 #!/bin/bash
 
-###############################################################################
-# Script: extraer_canales_xaccel.sh
-# Extrae URLs UDP y nombres cortos de output RTMP localhost desde el dump .gz más reciente.
-# chuymex, 2025-09-21
-###############################################################################
-
-# ----------- Configuración de rutas y nombres -------------
-DUMP_DIR="/opt/xaccel-codec/backup"
-DUMP_PREFIX="xaccel-codec"
-DUMP_EXT="gz"
+# Configuración de archivos
+DUMP_GZ=$(ls -1t /opt/xaccel-codec/backup/xaccel-codec-*.gz 2>/dev/null | head -n 1)
 OUTPUT_FILE="canales_por_grupos.txt"
-DELIM="|"
-OUTPUT_DIR="."
-UDP_PREFIX="udp://@"
-RTMP_PREFIX="rtmp://localhost:"
 
-# Detecta el archivo dump más reciente
-DUMP_GZ=$(ls -1t "${DUMP_DIR}/${DUMP_PREFIX}"*."${DUMP_EXT}" 2>/dev/null | head -n 1)
-echo "Usando archivo dump detectado: $DUMP_GZ"
+echo "# $OUTPUT_FILE - UDP y nombre corto del output RTMP localhost relacionados por stream_id" > "$OUTPUT_FILE"
+echo "# Formato: udp_url|nombre_output_localhost" >> "$OUTPUT_FILE"
+echo "# Generado el $(date)" >> "$OUTPUT_FILE"
+echo "#" >> "$OUTPUT_FILE"
 
-# Cabecera del archivo de salida
-{
-    echo "# $OUTPUT_FILE - Lista de streams UDP y nombre corto del output RTMP localhost"
-    echo "# Formato: url_udp${DELIM}nombre_output_localhost"
-    echo "# Generado por $0 el $(date)"
-    echo "# Dump detectado: $DUMP_GZ"
-    echo "# Delimitador: $DELIM"
-    echo "# Prefijo UDP: $UDP_PREFIX"
-    echo "# Prefijo RTMP localhost: $RTMP_PREFIX"
-    echo "# Ejemplo de línea:"
-    echo "# ${UDP_PREFIX}225.1.1.20:5020${DELIM}discoverychannel"
-    echo "#"
-} > "${OUTPUT_DIR}/${OUTPUT_FILE}"
-
-# Procesa cada registro que tiene UDP
-zcat "$DUMP_GZ" | grep "INSERT INTO \`stream_config\`" | sed 's/),(/)\n(/g' | grep "$UDP_PREFIX" | \
+# 1. Extrae UDP y stream_id de stream_config
+zcat "$DUMP_GZ" | grep "INSERT INTO \`stream_config\`" | sed 's/),(/)\n(/g' | \
 while read -r registro; do
-    # Extrae la URL UDP (puede haber más de una, pero normalmente solo hay una)
+    # Extrae stream_id (último campo de cada registro)
+    stream_id=$(echo "$registro" | awk -F',' '{print $NF}' | sed 's/[)]//g')
+    # Extrae la URL UDP
     url_udp=$(echo "$registro" | grep -oP 'udp://@[0-9\.]+:[0-9]+')
-    # Extrae todas las URLs RTMP localhost del registro
-    echo "$registro" | grep -oP "rtmp://localhost:[0-9]+/[^ ',)]+" | while read -r url_rtmp; do
-        # Extrae el nombre corto del RTMP (último segmento, sin .m3u8 ni comillas)
-        nombre_output=$(echo "$url_rtmp" | sed -nE "s#.*/([^/']+)\$#\1#p" | sed 's/.m3u8$//')
-        # Solo imprime si ambos existen
-        if [ -n "$url_udp" ] && [ -n "$nombre_output" ]; then
-            echo "$url_udp$DELIM$nombre_output"
-        fi
-    done
-done >> "${OUTPUT_DIR}/${OUTPUT_FILE}"
+    # Solo si hay UDP y stream_id, guarda en archivo temporal
+    if [ -n "$url_udp" ] && [ -n "$stream_id" ]; then
+        echo "$stream_id|$url_udp"
+    fi
+done > udp_streamid_temp.txt
 
-echo "Archivo generado correctamente: ${OUTPUT_DIR}/${OUTPUT_FILE}"
+# 2. Extrae RTMP localhost y stream_id de stream_output_config
+zcat "$DUMP_GZ" | grep "INSERT INTO \`stream_output_config\`" | sed 's/),(/)\n(/g' | \
+while read -r registro; do
+    # Extrae stream_id (penúltimo campo)
+    stream_id=$(echo "$registro" | awk -F',' '{print $(NF-1)}' | sed 's/[)]//g')
+    # Extrae RTMP localhost
+    rtmp_url=$(echo "$registro" | grep -oP "rtmp://localhost:[0-9]+/[^ ',)]+" )
+    # Extrae nombre corto (último segmento)
+    if [ -n "$rtmp_url" ] && [ -n "$stream_id" ]; then
+        nombre_output=$(echo "$rtmp_url" | sed -nE "s#.*/([^/']+)\$#\1#p" | sed 's/.m3u8$//')
+        echo "$stream_id|$nombre_output"
+    fi
+done > rtmp_streamid_temp.txt
 
-###############################################################################
-# FIN DEL SCRIPT
-###############################################################################
+# 3. Une por stream_id y genera el archivo final
+while IFS="|" read -r stream_id udp_url; do
+    nombre_output=$(grep "^$stream_id|" rtmp_streamid_temp.txt | head -n 1 | cut -d'|' -f2)
+    if [ -n "$udp_url" ] && [ -n "$nombre_output" ]; then
+        echo "$udp_url|$nombre_output" >> "$OUTPUT_FILE"
+    fi
+done < udp_streamid_temp.txt
+
+# Limpieza
+rm -f udp_streamid_temp.txt rtmp_streamid_temp.txt
+
+echo "Archivo generado correctamente: $OUTPUT_FILE"
