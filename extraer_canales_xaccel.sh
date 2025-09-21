@@ -10,25 +10,51 @@
 # Fecha: 2025-09-21
 ###############################################################################
 
-# ========================== CONFIGURACIÓN INICIAL ============================
-DUMP_DIR="/opt/xaccel-codec/backup"
+# ======================= AYUDA Y ARGUMENTOS POR CONSOLA ======================
+mostrar_ayuda() {
+    echo "Uso: $0 [ruta_dump] [archivo_salida]"
+    echo ""
+    echo "  ruta_dump      Ruta donde buscar el dump .gz (por defecto: /opt/xaccel-codec/backup)"
+    echo "  archivo_salida Nombre del archivo de salida (por defecto: canales.txt)"
+    echo ""
+    echo "Ejemplo:"
+    echo "  $0 /opt/xaccel-codec/backup canales.txt"
+    echo ""
+    exit 1
+}
+
+# Si el usuario pide ayuda
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    mostrar_ayuda
+fi
+
+# ======================= CONFIGURACIÓN PERSONALIZABLE ========================
+DUMP_DIR="${1:-/opt/xaccel-codec/backup}"    # Argumento 1 o valor por defecto
 DUMP_PREFIX="xaccel-codec"
 DUMP_EXT="gz"
-OUTPUT_FILE="canales_por_grupos.txt"
+OUTPUT_FILE="${2:-canales.txt}"              # Argumento 2 o valor por defecto
 
-# ========================== LOCALIZA EL DUMP MÁS RECIENTE ====================
+# ======================= LOCALIZA EL DUMP MÁS RECIENTE =======================
 DUMP_GZ=$(ls -1t "${DUMP_DIR}/${DUMP_PREFIX}"*."${DUMP_EXT}" 2>/dev/null | head -n 1)
 
-# ========================== CABECERA DEL ARCHIVO DE SALIDA ===================
+# ----------- Validación de existencia de dump ---------
+if [[ ! -f "$DUMP_GZ" ]]; then
+    echo "ERROR: No se encontró ningún archivo dump en la ruta: $DUMP_DIR"
+    exit 1
+fi
+
+# ======================= CABECERA DEL ARCHIVO DE SALIDA ======================
 {
 echo "# $OUTPUT_FILE - UDP y nombre corto del output RTMP localhost relacionados por stream_id"
 echo "# Formato: udp_url|nombre_output_localhost"
 echo "# Generado por $0 el $(date)"
 echo "# Dump detectado: $DUMP_GZ"
+echo "# Puedes personalizar la ruta de búsqueda del dump con argumento 1 o editando DUMP_DIR."
+echo "# Puedes personalizar el nombre del archivo de salida con argumento 2 o editando OUTPUT_FILE."
 echo "#"
 } > "$OUTPUT_FILE"
 
-# ========================== FUNCIÓN: EXTRAER UDP Y STREAM_ID =================
+# ======================= FUNCIÓN: EXTRAER UDP Y STREAM_ID ====================
 extraer_udp_streamid() {
     # Procesa stream_config y obtiene UDP y stream_id
     zcat "$DUMP_GZ" | grep "INSERT INTO \`stream_config\`" | sed 's/),(/)\n(/g' | \
@@ -44,7 +70,7 @@ extraer_udp_streamid() {
     done > udp_streamid_temp.txt
 }
 
-# ========================== FUNCIÓN: EXTRAER RTMP Y STREAM_ID ================
+# ======================= FUNCIÓN: EXTRAER RTMP Y STREAM_ID ===================
 extraer_rtmp_streamid() {
     # Procesa stream_output_config y obtiene RTMP localhost y stream_id
     zcat "$DUMP_GZ" | grep "INSERT INTO \`stream_output_config\`" | sed 's/),(/)\n(/g' | \
@@ -61,7 +87,7 @@ extraer_rtmp_streamid() {
     done > rtmp_streamid_temp.txt
 }
 
-# ========================== FUNCIÓN: ASOCIAR Y EXPORTAR ======================
+# ======================= FUNCIÓN: ASOCIAR Y EXPORTAR =========================
 unir_udp_rtmp_por_streamid() {
     # Une ambos archivos temporales por stream_id y exporta al archivo final
     while IFS="|" read -r stream_id udp_url; do
@@ -72,12 +98,12 @@ unir_udp_rtmp_por_streamid() {
     done < udp_streamid_temp.txt
 }
 
-# ========================== FUNCIÓN: LIMPIEZA FINAL ==========================
+# ======================= FUNCIÓN: LIMPIEZA FINAL =============================
 limpiar_temporales() {
     rm -f udp_streamid_temp.txt rtmp_streamid_temp.txt
 }
 
-# ========================== EJECUCIÓN MODULAR DEL SCRIPT =====================
+# ======================= EJECUCIÓN MODULAR DEL SCRIPT ========================
 echo "Usando archivo dump detectado: $DUMP_GZ"
 echo "Extrayendo UDP y stream_id..."
 extraer_udp_streamid
